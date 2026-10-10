@@ -1,0 +1,24 @@
+{
+  "name": "LateNightTaxi",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/ReplicatedStorage/Shared" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/ServerScriptService" }
+    },
+    "ServerStorage": {
+      "Assets": { "$path": "src/ServerStorage" }
+    },
+    "StarterGui": { "$path": "src/StarterGui" },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/StarterPlayerScripts" }
+      },
+      "StarterCharacterScripts": {
+        "Character": { "$path": "src/StarterCharacterScripts" }
+      }
+    }
+  }
+}
