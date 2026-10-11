@@ -203,11 +203,13 @@ local function updateHand(side, dt)
 	local a = t * t * t * (t * (t * 6 - 15) + 10)
 	local from = h.from and bodyCF * h.from or target
 	h.current = from:Lerp(target, a)
-	h.pose = pose
+	-- fingers open while the hand travels, then close on whatever it reaches
+	h.pose = (h.t < 0.75 and (pose == "grip" or pose == "handle")) and "open" or pose
 	h.visible = h.provider ~= nil or h.t < 1
 end
 
 -- hand target builders (all return a wrist CFrame and a finger pose)
+local GRIP_SPREAD = math.rad(68) -- grip angle from the top of the rim
 local GRIP_FOLLOW = math.rad(80) -- past this much lock the hands slide along the rim instead of crossing
 local function wheelGrip(side)
 	local att = wheel:FindFirstChild("Grip" .. side)
@@ -218,14 +220,23 @@ local function wheelGrip(side)
 	-- built from the joint itself so the hands match this frame's wheel angle exactly
 	local angle = math.clamp(CabVisuals.getWheelAngle(), -GRIP_FOLLOW, GRIP_FOLLOW)
 	local wheelCF = motor.Part0.CFrame * motor.C0 * CFrame.Angles(angle, 0, 0) * motor.C1:Inverse()
-	local p = (wheelCF * att.CFrame).Position
+	-- relaxed ten-and-two: spread the grips a little wider than the rig's attachments
+	local lp = att.CFrame.Position
+	local r = math.sqrt(lp.Y * lp.Y + lp.Z * lp.Z)
+	lp = Vector3.new(lp.X, r * math.cos(GRIP_SPREAD), math.sign(lp.Z) * r * math.sin(GRIP_SPREAD))
+	local p = wheelCF * lp
 	local n = -wheelCF.RightVector -- wheel face toward the driver
 	local d = p - wheelCF.Position
 	d = (d - n * d:Dot(n)).Unit -- out from the hub
 	local t = d:Cross(n)
 	local y = (d * 0.6 + n * 0.8).Unit
 	local z = t:Cross(y).Unit
-	y = z:Cross(t)
+	-- straight wrist: the hand mostly continues the forearm, knuckles over the rim
+	local fore = p - (shoulderPos(side) - bodyCF.UpVector * 0.8)
+	fore = (fore - t * fore:Dot(t)).Unit
+	z = (z * 0.3 - fore * 0.7).Unit
+	y = z:Cross(t).Unit
+	z = t:Cross(y)
 	return CFrame.fromMatrix(p, t, y, z) * CFrame.new(-FPBody.GRIP_POINT), "grip"
 end
 
@@ -1271,7 +1282,7 @@ local function frame(dt)
 		body:setVisible(side, h.visible)
 		if h.visible then
 			local s = side == "L" and -1 or 1
-			body:poseArm(side, shoulderPos(side), h.current, bodyCF * Vector3.new(s * 1.4, -1.6, 0.7), h.pose, dt)
+			body:poseArm(side, shoulderPos(side), h.current, bodyCF * Vector3.new(s * 2.2, -1.8, 0.5), h.pose, dt) -- elbows out and down
 		end
 	end
 	body:commit()
