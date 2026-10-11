@@ -248,7 +248,7 @@ local poles = {}
 for _, side in { "L", "R" } do
 	local a = chassis:FindFirstChild("ElbowPole" .. side) or Instance.new("Attachment")
 	a.Name = "ElbowPole" .. side
-	a.Position = side == "L" and Vector3.new(-3.3, 1.4, -0.8) or Vector3.new(0.1, 1.4, -0.8)
+	a.Position = (side == "L" and Vector3.new(-3.3, 1.4, -0.8) or Vector3.new(0.1, 1.4, -0.8)) * cab:GetScale()
 	a.Parent = chassis
 	poles[side] = a
 end

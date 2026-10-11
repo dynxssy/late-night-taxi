@@ -13,7 +13,7 @@ local wheelMotor = cab:WaitForChild("SteeringWheel"):WaitForChild("SteerMotor")
 
 local SOUND_OPEN = "rbxassetid://119661318727626"
 local SOUND_CLOSE = "rbxassetid://121381393291287"
-local GLASS_DROP = 2.1 -- studs the window glass lowers
+local GLASS_DROP = 2.1 * cab:GetScale() -- studs the window glass lowers
 local GLASS_SPEED = 1.3 -- studs per second
 local OPEN_K, OPEN_C = 70, 9 -- swing-open spring (slightly underdamped: bounces on the check strap)
 local CLOSE_PULL = 950 -- deg/s^2 a closing door accelerates with

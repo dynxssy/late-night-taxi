@@ -19,6 +19,7 @@ local seatRemote = remotes:WaitForChild("CabSeat")
 local cab = workspace:WaitForChild("Vehicles"):WaitForChild("Cab")
 local chassis = cab:WaitForChild("Chassis")
 local wheel = cab:WaitForChild("SteeringWheel")
+local SCALE = cab:GetScale() -- cab-sized distances below are written for a scale-1 cab
 
 local SENSITIVITY = 0.0022
 local LOOK_SMOOTH = 30
@@ -32,8 +33,8 @@ local SEAT_YAW_LIMIT = math.rad(130)
 local NECK_TO_EYE = Vector3.new(0, 0.38, -0.22) -- the head turns about the neck, not the eyes
 local EYE_FROM_SHOULDER = Vector3.new(0, 0.8, -0.05)
 local SEAT_LAYOUT = { -- seat space: shoulder centre and hip centre
-	Front = { shoulder = Vector3.new(0, 2.75, -0.15), hip = Vector3.new(0, 0.85, 0.35) },
-	Back = { shoulder = Vector3.new(0, 2.75, 0.15), hip = Vector3.new(0, 0.85, 0.45) },
+	Front = { shoulder = Vector3.new(0, 2.35, -0.15), hip = Vector3.new(0, 0.85, 0.35) },
+	Back = { shoulder = Vector3.new(0, 2.35, 0.15), hip = Vector3.new(0, 0.85, 0.45) },
 }
 local ROW_PARTNER = { DriverSeat = "ShotgunSeat", ShotgunSeat = "DriverSeat", BackSeatL = "BackSeatR", BackSeatR = "BackSeatL" }
 local MOVE_KEYS = { Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D }
@@ -243,6 +244,13 @@ local function pushCF(side, point, normal)
 	local f = Vector3.yAxis * 0.75 + (point - shoulderPos(side)).Unit * 0.4
 	f = (f - normal * f:Dot(normal)).Unit
 	return CFrame.lookAt(point, point + f, normal) * CFrame.new(0, 0.08, 0.17)
+end
+
+-- palm flat on a seat cushion, shifted toward one side of it (toward = cab x sign)
+local function seatPalm(side, onSeat, toward)
+	local cf = onSeat.CFrame
+	local p = cf * Vector3.new(toward * onSeat.Size.X * 0.25, onSeat.Size.Y / 2 + 0.04, -0.1)
+	return pushCF(side, p, cf.UpVector)
 end
 
 local function restProvider(side)
@@ -455,8 +463,9 @@ end
 
 local function exitClear(door, standLocal)
 	local s = door:GetAttribute("Side")
-	local from = cabCF() * Vector3.new(s * 3.9, 3.2, standLocal.Z - 0.6)
-	local to = cabCF() * Vector3.new(standLocal.X, 3.2, standLocal.Z)
+	local hx = door.Skin.Hinge.C0.Position.X -- the door's outer face
+	local from = cabCF() * Vector3.new(hx + s * 0.25, 3.2 * SCALE, standLocal.Z - 0.6)
+	local to = cabCF() * Vector3.new(standLocal.X, 3.2 * SCALE, standLocal.Z)
 	return workspace:Raycast(from, to - from, rayParams()) == nil
 end
 
@@ -509,9 +518,10 @@ local function startEnter(door)
 	local eye0 = toCab(camera.CFrame.Position)
 	local yaw0, pitch0 = currentCabLook()
 	local nearEye = seatEyeLocal(target)
-	local A = Vector3.new(s * 5.1, eye0.Y, rearZ + 0.7)
+	local A = Vector3.new(hinge.X + s * 1.45, eye0.Y, rearZ + 0.7)
 	local yawA, pitchA = yawPitchOf(toCab(door.HandleOut.Position) - A)
-	local B = Vector3.new(s * 4.2, (eye0.Y + nearEye.Y) / 2 + 0.25, nearEye.Z + 0.1)
+	-- duck under the door frame on the way in
+	local B = Vector3.new(hinge.X + s * 0.55, math.min((eye0.Y + nearEye.Y) / 2 + 0.25, nearEye.Y + 0.15), nearEye.Z + 0.1)
 	local C = Vector3.new(nearEye.X + s * 0.85, nearEye.Y + 0.3, nearEye.Z + 0.05)
 	local lean = Vector3.new(s * 0.35, -0.05, 0.05)
 	local T = 2.0 -- arrival in the seat
@@ -544,9 +554,15 @@ local function startEnter(door)
 	sq.at(0.55, function()
 		serverDoor(door, true)
 	end)
+	-- swinging in, that hand steadies on the wheel (driver) or on the far side of the cushion
 	sq.at(0.9, function()
 		hands[oh].busy = false
-		setHand(oh, nil, 0.35)
+		setHand(oh, function()
+			if target.Name == "DriverSeat" then
+				return wheelGrip(oh)
+			end
+			return seatPalm(oh, target, -s), "open"
+		end, 0.6)
 	end)
 	sq.at(T - 0.15, function()
 		local r = seatRemote:InvokeServer("Sit", target.Name)
@@ -638,8 +654,8 @@ local function startExit()
 	local door = cab.Doors:FindFirstChild(seat:GetAttribute("Door"))
 	local function plan(d)
 		local s = d:GetAttribute("Side")
-		local hz = d.Skin.Hinge.C0.Position.Z
-		local stand = Vector3.new(s * 5.1, 0, hz + d:GetAttribute("Length") + 0.7)
+		local hinge = d.Skin.Hinge.C0.Position
+		local stand = Vector3.new(hinge.X + s * 1.45, 0, hinge.Z + d:GetAttribute("Length") + 0.7)
 		local y = standEyeY(stand)
 		if y and exitClear(d, stand) then
 			return Vector3.new(stand.X, y, stand.Z)
@@ -672,7 +688,7 @@ local function startExit()
 		t0 = 0.8
 		table.insert(keys, { t = t0, pos = nearEye, yaw = -s * math.rad(20), pitch = -0.15 })
 	end
-	local B = Vector3.new(s * 4.25, (nearEye.Y + standA.Y) / 2 + 0.2, nearEye.Z + 0.1)
+	local B = Vector3.new(door.Skin.Hinge.C0.Position.X + s * 0.6, math.min((nearEye.Y + standA.Y) / 2 + 0.2, nearEye.Y + 0.2), nearEye.Z + 0.1)
 	local C = Vector3.new(nearEye.X + s * 0.85, nearEye.Y + 0.25, nearEye.Z + 0.1)
 	local rear = door.Skin.CFrame * Vector3.new(0, 1.2, door:GetAttribute("Length") / 2)
 	local yawPush = yawPitchOf(toCab(rear) - standA)
@@ -731,21 +747,32 @@ local function startExit()
 		seat = nil
 		driveRoot(true)
 	end)
+	-- the other hand stays on the wheel or pushes off the cushion until the body is moving out
 	sq.at(t0 + 0.45, function()
 		if not hands[oh].busy then
-			setHand(oh, nil, 0.35)
+			setHand(oh, function()
+				if fromSeat.Name == "DriverSeat" then
+					return wheelGrip(oh)
+				end
+				return seatPalm(oh, fromSeat, -s), "open"
+			end, 0.3)
 		end
 	end)
 	sq.at(t0 + 0.55, function()
 		animateDoor(door, s * 50, 0.4, "out")
+	end)
+	sq.at(t0 + 0.95, function()
 		hands[ih].busy = false
 		setHand(ih, nil, 0.4)
+		if not hands[oh].busy then
+			setHand(oh, nil, 0.4)
+		end
 	end)
 	sq.at(t0 + 1.55, function()
 		hands[oh].busy = true
 		setHand(oh, function()
 			local post = door.FrameRear
-			return grabCF(oh, post.CFrame * Vector3.new(0, -1.2, 0), false), "handle"
+			return grabCF(oh, post.CFrame * Vector3.new(0, -0.15 * post.Size.Y, 0), false), "handle"
 		end, 0.3)
 	end)
 	sq.at(t0 + 1.8, function()
@@ -810,8 +837,12 @@ local function startSlide(target)
 	if seat:IsA("VehicleSeat") then
 		seat.ThrottleFloat, seat.SteerFloat = 0, 0
 	end
-	setHand("L", nil, 0.3)
-	setHand("R", nil, 0.3)
+	-- the leading hand plants on the next cushion and pushes the body across
+	local lead = side > 0 and "R" or "L"
+	setHand(lead, function()
+		return seatPalm(lead, target, side), "open"
+	end, 0.3)
+	setHand(lead == "R" and "L" or "R", nil, 0.3)
 	sq.at(0.3, function()
 		local r = seatRemote:InvokeServer("Move", target.Name)
 		if seq ~= sq then
