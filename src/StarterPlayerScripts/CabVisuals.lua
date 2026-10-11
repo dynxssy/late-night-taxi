@@ -111,6 +111,12 @@ local wheelAngle = 0 -- radians; positive turns the rim clockwise as the driver 
 function CabVisuals.getWheelAngle()
 	return wheelAngle
 end
+
+-- the local driver's own steer/throttle; other clients read the replicated seat
+local driverInput = nil
+function CabVisuals.setDriverInput(steer, throttle)
+	driverInput = steer and { steer = steer, throttle = throttle } or nil
+end
 local pedals = {}
 for _, name in { "GasPedal", "BrakePedal" } do
 	local pad = cab:FindFirstChild(name)
@@ -162,14 +168,16 @@ local function step(dt)
 	end
 
 	-- steering wheel follows the driver's input exactly like CabDrive steers the road wheels
-	local steerInput = driverSeat.Occupant and driverSeat.SteerFloat or (cab:GetAttribute("TestSteer") or 0)
+	local steerInput = driverInput and driverInput.steer
+		or driverSeat.Occupant and driverSeat.SteerFloat
+		or (cab:GetAttribute("TestSteer") or 0)
 	steerSmoothed += (steerInput - steerSmoothed) * (1 - math.exp(-STEER_RATE * dt))
 	local forwardSpeed = math.abs(chassis.CFrame:VectorToObjectSpace(chassis.AssemblyLinearVelocity).Z)
 	local limit = MAX_STEER + (HIGH_SPEED_STEER - MAX_STEER) * math.clamp(forwardSpeed / MAX_SPEED, 0, 1)
 	wheelAngle = math.rad(steerSmoothed * limit * WHEEL_TURNS)
 	wheelMotor.Transform = CFrame.Angles(wheelAngle, 0, 0)
 
-	local throttle = driverSeat.Occupant and driverSeat.ThrottleFloat or 0
+	local throttle = driverInput and driverInput.throttle or driverSeat.Occupant and driverSeat.ThrottleFloat or 0
 	local goals = { GasPedal = math.max(throttle, 0) * 16, BrakePedal = math.max(-throttle, 0) * 13 }
 	for name, p in pedals do
 		p.angle += (goals[name] - p.angle) * (1 - math.exp(-18 * dt))

@@ -34,7 +34,7 @@ local SEAT_PITCH = -0.12 -- resting look while seated: a touch down, so the whee
 local NECK_TO_EYE = Vector3.new(0, 0.38, -0.22) -- the head turns about the neck, not the eyes
 local EYE_FROM_SHOULDER = Vector3.new(0, 0.8, -0.05)
 local SEAT_LAYOUT = { -- seat space: shoulder centre and hip centre
-	Front = { shoulder = Vector3.new(0, 1.9, -0.15), hip = Vector3.new(0, 0.85, 0.35) },
+	Front = { shoulder = Vector3.new(0, 1.9, 0.07), hip = Vector3.new(0, 0.85, 0.35) }, -- shoulders against the backrest
 	Back = { shoulder = Vector3.new(0, 1.9, 0.15), hip = Vector3.new(0, 0.85, 0.45) },
 }
 local ROW_PARTNER = { DriverSeat = "ShotgunSeat", ShotgunSeat = "DriverSeat", BackSeatL = "BackSeatR", BackSeatR = "BackSeatL" }
@@ -162,9 +162,9 @@ glow.Name = "InstrumentGlow"
 glow.Parent = cab:WaitForChild("DriverSeat")
 glow.WorldPosition = wheel.Position + cab:GetPivot():VectorToWorldSpace(Vector3.new(0, 0.7, 0.72) * cab:GetScale())
 local glowLight = Instance.new("PointLight")
-glowLight.Color = Color3.fromRGB(255, 205, 160)
-glowLight.Brightness = 0.7
-glowLight.Range = 2.6
+glowLight.Color = Color3.fromRGB(255, 190, 140)
+glowLight.Brightness = 0.18
+glowLight.Range = 2.4
 glowLight.Shadows = false
 glowLight.Parent = glow
 
@@ -724,6 +724,7 @@ local function startExit()
 	mode = "seq"
 	if seat:IsA("VehicleSeat") then
 		seat.ThrottleFloat, seat.SteerFloat = 0, 0
+		CabVisuals.setDriverInput(nil)
 	end
 
 	local oh, ih = outerHand(s), innerHand(s)
@@ -852,6 +853,7 @@ local function startSlide(target)
 	mode = "seq"
 	if seat:IsA("VehicleSeat") then
 		seat.ThrottleFloat, seat.SteerFloat = 0, 0
+		CabVisuals.setDriverInput(nil)
 	end
 	-- the leading hand plants on the next cushion and pushes the body across
 	local lead = side > 0 and "R" or "L"
@@ -1173,24 +1175,26 @@ local function frame(dt)
 			end
 			seat.ThrottleFloat = math.clamp(throttle, -1, 1)
 			seat.SteerFloat = math.clamp(steer, -1, 1)
+			-- the default vehicle controls also write the seat, so the wheel follows our own input
+			CabVisuals.setDriverInput(seat.SteerFloat, seat.ThrottleFloat)
 		end
 
 		-- seated legs: feet on the floor, the driver's right foot works the pedals
 		body:setVisible("legs", true)
 		local ankles = {}
 		local footRot = seatCF.Rotation * CFrame.Angles(-0.35, 0, 0)
-		ankles.L = footRot + (seatCF * Vector3.new(-0.42, -0.12, -1.62))
+		ankles.L = footRot + (seatCF * Vector3.new(-0.42, -0.12, -1.95))
 		if seat.Name == "DriverSeat" then
 			local braking = seat.ThrottleFloat < -0.05
 			footBlend += ((braking and 1 or 0) - footBlend) * damp(14, dt)
 			local gas = cab:FindFirstChild("GasPedal")
 			local brake = cab:FindFirstChild("BrakePedal")
-			local gp = gas and (gas.CFrame * Vector3.new(0, 0.12, 0.2)) or (seatCF * Vector3.new(0.35, -0.1, -1.75))
+			local gp = gas and (gas.CFrame * Vector3.new(0, 0.12, 0.2)) or (seatCF * Vector3.new(0.35, -0.1, -2.05))
 			local bp = brake and (brake.CFrame * Vector3.new(0, 0.12, 0.2)) or gp
 			local lift = math.sin(footBlend * math.pi) * 0.18
 			ankles.R = (seatCF.Rotation * CFrame.Angles(-0.55, 0, 0)) + gp:Lerp(bp, footBlend) + seatCF.UpVector * lift
 		else
-			ankles.R = footRot + (seatCF * Vector3.new(0.42, -0.12, -1.62))
+			ankles.R = footRot + (seatCF * Vector3.new(0.42, -0.12, -1.95))
 		end
 		body:poseLegs(seatCF, seatCF * layout.hip + sway * 0.4, bodyCF.Position, ankles, seatCF * Vector3.new(0, 2.6, -1.6))
 	else
@@ -1293,7 +1297,8 @@ local function frame(dt)
 	local hit = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * range, params)
 	local target, text = evaluate(hit)
 	focused, focusedHit = target, target and hit or nil
-	highlight.Adornee = target
+	-- doors outline their visible meshes, not the invisible rig boxes behind them
+	highlight.Adornee = target and (target:FindFirstChild("Visual") or target) or nil
 	prompt.Text = target and ("[E] " .. text) or ""
 	dot.Size = target and UDim2.fromOffset(8, 8) or UDim2.fromOffset(4, 4)
 end

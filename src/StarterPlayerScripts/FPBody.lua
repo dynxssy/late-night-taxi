@@ -1,6 +1,8 @@
 -- First-person body: low-poly jacket arms, leather-gloved hands with posable fingers, and a
 -- seated torso and legs, placed by two-bone IK every frame. It lives under the camera, so only
 -- the local player sees it; everyone else sees the real avatar.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local FPBody = {}
 FPBody.__index = FPBody
 
@@ -13,8 +15,8 @@ local STEEL = Color3.fromRGB(82, 80, 74)
 
 FPBody.UPPER_ARM = 1.1
 FPBody.FOREARM = 1.05
-FPBody.THIGH = 1.2
-FPBody.SHIN = 1.15
+FPBody.THIGH = 1.45
+FPBody.SHIN = 1.35
 
 local function material(name)
 	local ok, m = pcall(function()
@@ -124,9 +126,20 @@ function FPBody.new(parent)
 	end
 
 	self.arms = {}
+	local template = FPBody.armsTemplate()
+	if template then
+		self:_buildSkin(template)
+	end
 	for _, side in { "L", "R" } do
 		local thumbX = side == "R" and -1 or 1
 		local arm = { side = side, thumbX = thumbX, curls = {}, thumb = 0.3 }
+		for i = 1, 4 do
+			arm.curls[i] = { -0.5, -0.5 }
+		end
+		self.arms[side] = arm
+		if self.skin then
+			continue
+		end
 		arm.upper = add(side, cyl(model, side .. "UpperArm", FPBody.UPPER_ARM, 0.46, JACKET, LEATHER))
 		arm.shoulder = add(side, ball(model, side .. "Shoulder", 0.5, JACKET, LEATHER))
 		arm.elbow = add(side, ball(model, side .. "Elbow", 0.44, JACKET, LEATHER))
@@ -141,7 +154,6 @@ function FPBody.new(parent)
 				add(side, rounded(cyl(model, side .. "Finger" .. i .. "a", FINGER_LEN[i][1], FINGER_D[i], GLOVE, LEATHER), SEGMENT)),
 				add(side, rounded(cyl(model, side .. "Finger" .. i .. "b", FINGER_LEN[i][2], FINGER_D[i] * 0.94, GLOVE, LEATHER), SEGMENT)),
 			}
-			arm.curls[i] = { -0.5, -0.5 }
 		end
 		arm.thumbParts = {
 			add(side, rounded(cyl(model, side .. "ThumbA", 0.16, 0.09, GLOVE, LEATHER), SEGMENT)),
@@ -150,7 +162,6 @@ function FPBody.new(parent)
 		if side == "L" then
 			arm.watch = add(side, cyl(model, "Watch", 0.04, 0.15, STEEL, METAL))
 		end
-		self.arms[side] = arm
 	end
 
 	self.chest = add("legs", newPart(model, "Chest", Vector3.new(1.5, 1.6, 0.85), JACKET, LEATHER))
@@ -208,6 +219,10 @@ function FPBody:poseArm(side, shoulder, wristCF, pole, pose, dt)
 
 	local elbow, wrist = FPBody.solve(FPBody.UPPER_ARM, FPBody.FOREARM, shoulder, wristCF.Position, pole)
 	local hand = wristCF.Rotation + wrist
+	if self.skin then
+		self:_poseSkin(side, arm, shoulder, elbow, wrist, hand, pole)
+		return
+	end
 	self:_set(arm.shoulder, CFrame.new(shoulder))
 	self:_set(arm.upper, segment(shoulder, elbow) * CYL)
 	self:_set(arm.elbow, CFrame.new(elbow))
@@ -263,8 +278,200 @@ function FPBody:poseLegs(frame, hipCenter, shoulderCenter, ankles, kneePole)
 	end
 end
 
+-- Skinned arms ------------------------------------------------------------------------------
+-- The user's PS1 arms model (ReplicatedStorage.Assets.FPArms): one skinned mesh with both arms.
+-- Its bones follow the same IK as the part arms: the upper arm and forearm aim down the solved
+-- segments and roll with the elbow hinge, the hand takes the wrist target, and the finger bones
+-- curl about the hand's knuckle axis. Without the asset the part arms above are used.
+
+local TWIST = 0.6 -- how much of the hand's roll the forearm carries (the rest twists at the wrist)
+local HIDDEN = Vector3.new(0, -60, 0) -- a hidden arm is parked under the ground
+
+function FPBody.armsTemplate()
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local model = assets and assets:FindFirstChild("FPArms")
+	return model and model:FindFirstChildWhichIsA("MeshPart", true)
+end
+
+local function signedAngle(a, b, axis)
+	return math.atan2(a:Cross(b):Dot(axis), a:Dot(b))
+end
+
+-- rotation taking local (0,1,0) onto dir and the local hinge onto the world hinge, at pos
+local function aim(pos, dir, hinge, hingeLocal)
+	local h = hinge - dir * hinge:Dot(dir)
+	if h.Magnitude < 1e-4 then
+		h = dir:Cross(Vector3.xAxis)
+	end
+	h = h.Unit
+	local y = Vector3.yAxis
+	return CFrame.fromMatrix(pos, dir, h, dir:Cross(h)) * CFrame.fromMatrix(Vector3.zero, y, hingeLocal, y:Cross(hingeLocal)):Inverse()
+end
+
+-- turn a frame by the smallest rotation that points its Y along dir
+local function swing(cf, dir)
+	local y = cf.UpVector
+	local axis = y:Cross(dir)
+	if axis.Magnitude < 1e-5 then
+		return cf
+	end
+	return CFrame.fromAxisAngle(axis.Unit, math.atan2(axis.Magnitude, y:Dot(dir))) * cf
+end
+
+function FPBody:_buildSkin(template)
+	local mesh = template:Clone()
+	mesh.Anchored = true
+	mesh.CanCollide, mesh.CanQuery, mesh.CanTouch = false, false, false
+	mesh.Parent = self.model
+	self.mesh = mesh
+
+	-- rest pose of every bone in mesh space
+	local rest = {}
+	local function walk(parent, parentCF)
+		for _, b in parent:GetChildren() do
+			if b:IsA("Bone") then
+				rest[b] = parentCF * b.CFrame
+				walk(b, rest[b])
+			end
+		end
+	end
+	walk(mesh, CFrame.identity)
+
+	self.skin = {}
+	local tips, grips = {}, {}
+	for _, side in { "L", "R" } do
+		local thumbX = side == "R" and -1 or 1
+		local function bone(name)
+			return mesh:FindFirstChild(name .. "." .. side, true)
+		end
+		local upper, fore, hand = bone("upper_arm"), bone("forearm"), bone("hand")
+		local index = { bone("f_index.01"), bone("f_index.02"), bone("f_index.03") }
+		local ring = { bone("f_ring.01"), bone("f_ring.02"), bone("f_ring.03") }
+		local thumb = { bone("thumb.01"), bone("thumb.02"), bone("thumb.03") }
+
+		-- the hand frame the IK works in: wrist at the origin, fingers toward -Z, back of the hand
+		-- toward +Y, thumb side toward +X * thumbX
+		local wrist = rest[hand].Position
+		local k1, k2 = rest[index[1]].Position, rest[ring[1]].Position
+		local F = ((k1 + k2) / 2 - wrist).Unit
+		local T = k1 - k2
+		T = (T - F * T:Dot(F)).Unit
+		local X, Z = T * thumbX, -F
+		local frame = CFrame.fromMatrix(wrist, X, Z:Cross(X), Z)
+
+		-- the elbow bends about the model's side-to-side axis
+		local function hingeLocal(b)
+			local y = rest[b].UpVector
+			local h = (Vector3.xAxis - y * y.X).Unit
+			return rest[b]:VectorToObjectSpace(h)
+		end
+
+		-- finger joints: bone, curl axis in bone space, rest bend from the previous segment
+		local function chain(bones, axis, from)
+			local out = {}
+			local prev = from
+			for i, b in bones do
+				local y = rest[b].UpVector
+				out[i] = { bone = b, axis = rest[b]:VectorToObjectSpace(axis).Unit, rest = signedAngle(prev, y, axis) }
+				prev = y
+			end
+			return out
+		end
+
+		self.skin[side] = {
+			upper = upper,
+			fore = fore,
+			hand = hand,
+			upperHinge = hingeLocal(upper),
+			foreHinge = hingeLocal(fore),
+			handOffset = frame:Inverse() * rest[hand],
+			handToFore = rest[hand]:Inverse() * rest[fore],
+			index = chain(index, X, F),
+			ring = chain(ring, X, F),
+			thumb = chain(thumb, F * thumbX, rest[thumb[1]].UpVector),
+		}
+
+		-- fingertip and grip points in the hand frame
+		-- the point pose holds the index nearly straight; the last bone is about 0.8 of the middle one
+		local reach = index[2].Position.Magnitude + index[3].Position.Magnitude * 1.8
+		tips[side] = frame:PointToObjectSpace(k1) + Vector3.new(0, 0, -reach)
+		grips[side] = frame:PointToObjectSpace((k1 + k2) / 2)
+	end
+
+	FPBody.UPPER_ARM = self.skin.L.fore.Position.Magnitude
+	FPBody.FOREARM = self.skin.L.hand.Position.Magnitude
+	FPBody.INDEX_TIP = function(thumbX)
+		return tips[thumbX == -1 and "R" or "L"]
+	end
+	local g = (grips.L + grips.R) / 2
+	FPBody.GRIP_POINT = Vector3.new(0, g.Y - 0.12, g.Z + 0.04)
+end
+
+function FPBody:_poseSkin(side, arm, shoulder, elbow, wrist, hand, pole)
+	local skin = self.skin[side]
+	local up = (elbow - shoulder).Unit
+	local fd = (wrist - elbow).Unit
+	-- the bend plane comes from the pole, like the IK, so a straight arm doesn't spin
+	local d = wrist - shoulder
+	d = d.Magnitude > 1e-4 and d.Unit or up
+	local e = pole - shoulder
+	e -= d * e:Dot(d)
+	local n = e.Magnitude > 1e-4 and e.Unit:Cross(d) or up:Cross(fd)
+
+	local handCF = hand * skin.handOffset
+	local fromHinge = aim(elbow, fd, n, skin.foreHinge)
+	local fromHand = swing((handCF * skin.handToFore).Rotation, fd) + elbow
+	skin.world = {
+		upper = aim(shoulder, up, n, skin.upperHinge),
+		fore = fromHinge:Lerp(fromHand, TWIST),
+		hand = handCF,
+	}
+	skin.curls, skin.thumbCurl = arm.curls, arm.thumb
+end
+
+local function curl(joints, angles)
+	for i, j in joints do
+		j.bone.Transform = CFrame.fromAxisAngle(j.axis, angles[i] - j.rest)
+	end
+end
+
+function FPBody:_commitSkin()
+	local skinL, skinR = self.skin.L, self.skin.R
+	-- keep the mesh itself near the shoulders so it never culls away
+	local anchor = (skinL.world and skinL.world.upper.Position) or (skinR.world and skinR.world.upper.Position)
+	if anchor then
+		self.mesh.CFrame = CFrame.new(anchor)
+	end
+	local base = self.mesh.CFrame
+	local shown = false
+	for _, side in { "L", "R" } do
+		local skin = self.skin[side]
+		local w = skin.world
+		if not (self.visible[side] and w) then
+			skin.upper.Transform = CFrame.new((base * skin.upper.CFrame):VectorToObjectSpace(HIDDEN))
+			continue
+		end
+		shown = true
+		skin.upper.Transform = (base * skin.upper.CFrame):Inverse() * w.upper
+		skin.fore.Transform = (w.upper * skin.fore.CFrame):Inverse() * w.fore
+		skin.hand.Transform = (w.fore * skin.hand.CFrame):Inverse() * w.hand
+		local c = skin.curls
+		-- the model has an index finger and the other three fingers as one
+		local ringA = (c[2][1] + c[3][1] + c[4][1]) / 3
+		local ringB = (c[2][2] + c[3][2] + c[4][2]) / 3
+		curl(skin.index, { c[1][1], c[1][2] * 0.55, c[1][2] * 0.45 })
+		curl(skin.ring, { ringA, ringB * 0.55, ringB * 0.45 })
+		local t = skin.thumbCurl - 0.3
+		curl(skin.thumb, { skin.thumb[1].rest + t * 0.5, skin.thumb[2].rest + t * 0.6, skin.thumb[3].rest + t * 0.6 })
+	end
+	self.mesh.LocalTransparencyModifier = shown and 0 or 1
+end
+
 function FPBody:commit()
 	workspace:BulkMoveTo(self.parts, self.cfs, Enum.BulkMoveMode.FireCFrameChanged)
+	if self.skin then
+		self:_commitSkin()
+	end
 end
 
 function FPBody:destroy()
