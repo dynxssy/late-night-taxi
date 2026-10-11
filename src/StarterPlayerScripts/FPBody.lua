@@ -4,9 +4,9 @@
 local FPBody = {}
 FPBody.__index = FPBody
 
-local JACKET = Color3.fromRGB(56, 49, 40)
-local CUFF = Color3.fromRGB(39, 35, 30)
-local GLOVE = Color3.fromRGB(30, 25, 22)
+local JACKET = Color3.fromRGB(36, 32, 29)
+local CUFF = Color3.fromRGB(44, 40, 35)
+local GLOVE = Color3.fromRGB(98, 69, 47)
 local DENIM = Color3.fromRGB(35, 39, 48)
 local BOOT = Color3.fromRGB(27, 22, 19)
 local STEEL = Color3.fromRGB(82, 80, 74)
@@ -74,6 +74,16 @@ local function ball(parent, name, d, color, mat)
 	return newPart(parent, name, Vector3.new(d, d, d), color, mat, Enum.PartType.Ball)
 end
 
+-- turns a part into an ellipsoid filling its box (times scale), so gloves read soft, not blocky
+local function rounded(part, scale)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Scale = scale
+	mesh.Parent = part
+	return part
+end
+local SEGMENT = Vector3.new(1.4, 1, 1) -- finger bones overlap end to end, like knuckles under leather
+
 -- look along from->to without degenerating when the segment is vertical
 local function segment(from, to)
 	local dir = to - from
@@ -117,33 +127,33 @@ function FPBody.new(parent)
 	for _, side in { "L", "R" } do
 		local thumbX = side == "R" and -1 or 1
 		local arm = { side = side, thumbX = thumbX, curls = {}, thumb = 0.3 }
-		arm.upper = add(side, cyl(model, side .. "UpperArm", FPBody.UPPER_ARM, 0.46, JACKET, FABRIC))
-		arm.shoulder = add(side, ball(model, side .. "Shoulder", 0.5, JACKET, FABRIC))
-		arm.elbow = add(side, ball(model, side .. "Elbow", 0.44, JACKET, FABRIC))
-		arm.fore = add(side, cyl(model, side .. "Forearm", FPBody.FOREARM - 0.1, 0.4, JACKET, FABRIC))
+		arm.upper = add(side, cyl(model, side .. "UpperArm", FPBody.UPPER_ARM, 0.46, JACKET, LEATHER))
+		arm.shoulder = add(side, ball(model, side .. "Shoulder", 0.5, JACKET, LEATHER))
+		arm.elbow = add(side, ball(model, side .. "Elbow", 0.44, JACKET, LEATHER))
+		arm.fore = add(side, cyl(model, side .. "Forearm", FPBody.FOREARM - 0.1, 0.4, JACKET, LEATHER))
 		arm.cuff = add(side, cyl(model, side .. "Cuff", 0.16, 0.37, CUFF, FABRIC))
-		arm.wrist = add(side, cyl(model, side .. "Wrist", 0.16, 0.27, GLOVE, LEATHER))
-		arm.palm = add(side, newPart(model, side .. "Palm", Vector3.new(0.31, 0.13, 0.3), GLOVE, LEATHER))
-		arm.knuckles = add(side, cyl(model, side .. "Knuckles", 0.32, 0.13, GLOVE, LEATHER))
+		arm.wrist = add(side, rounded(cyl(model, side .. "Wrist", 0.16, 0.27, GLOVE, LEATHER), Vector3.new(1.7, 1, 1)))
+		arm.palm = add(side, rounded(newPart(model, side .. "Palm", Vector3.new(0.31, 0.13, 0.3), GLOVE, LEATHER), Vector3.new(1.08, 1.3, 1.25)))
+		arm.knuckles = add(side, rounded(cyl(model, side .. "Knuckles", 0.32, 0.13, GLOVE, LEATHER), Vector3.new(1.08, 1.15, 1.35)))
 		arm.fingers = {}
 		for i = 1, 4 do
 			arm.fingers[i] = {
-				add(side, cyl(model, side .. "Finger" .. i .. "a", FINGER_LEN[i][1], FINGER_D[i], GLOVE, LEATHER)),
-				add(side, cyl(model, side .. "Finger" .. i .. "b", FINGER_LEN[i][2], FINGER_D[i] * 0.94, GLOVE, LEATHER)),
+				add(side, rounded(cyl(model, side .. "Finger" .. i .. "a", FINGER_LEN[i][1], FINGER_D[i], GLOVE, LEATHER), SEGMENT)),
+				add(side, rounded(cyl(model, side .. "Finger" .. i .. "b", FINGER_LEN[i][2], FINGER_D[i] * 0.94, GLOVE, LEATHER), SEGMENT)),
 			}
 			arm.curls[i] = { -0.5, -0.5 }
 		end
 		arm.thumbParts = {
-			add(side, cyl(model, side .. "ThumbA", 0.16, 0.09, GLOVE, LEATHER)),
-			add(side, cyl(model, side .. "ThumbB", 0.13, 0.085, GLOVE, LEATHER)),
+			add(side, rounded(cyl(model, side .. "ThumbA", 0.16, 0.09, GLOVE, LEATHER), SEGMENT)),
+			add(side, rounded(cyl(model, side .. "ThumbB", 0.13, 0.085, GLOVE, LEATHER), SEGMENT)),
 		}
 		if side == "L" then
-			arm.watch = add(side, cyl(model, "Watch", 0.05, 0.2, STEEL, METAL))
+			arm.watch = add(side, cyl(model, "Watch", 0.04, 0.15, STEEL, METAL))
 		end
 		self.arms[side] = arm
 	end
 
-	self.chest = add("legs", newPart(model, "Chest", Vector3.new(1.5, 1.6, 0.85), JACKET, FABRIC))
+	self.chest = add("legs", newPart(model, "Chest", Vector3.new(1.5, 1.6, 0.85), JACKET, LEATHER))
 	self.lap = add("legs", newPart(model, "Lap", Vector3.new(1.45, 0.55, 1.05), DENIM, FABRIC))
 	self.legs = {}
 	for _, side in { "L", "R" } do

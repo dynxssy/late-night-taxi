@@ -30,11 +30,12 @@ local EYE_HEIGHT, CROUCH_DROP = 1.6, 1.4
 local INTERACT_RANGE, SEATED_RANGE = 7, 4.5
 local ARM_REACH = 3 -- shoulder to target; a seated hand (with a lean) can't press anything farther
 local SEAT_YAW_LIMIT = math.rad(130)
+local SEAT_PITCH = -0.12 -- resting look while seated: a touch down, so the wheel and your hands sit in view
 local NECK_TO_EYE = Vector3.new(0, 0.38, -0.22) -- the head turns about the neck, not the eyes
 local EYE_FROM_SHOULDER = Vector3.new(0, 0.8, -0.05)
 local SEAT_LAYOUT = { -- seat space: shoulder centre and hip centre
-	Front = { shoulder = Vector3.new(0, 2.35, -0.15), hip = Vector3.new(0, 0.85, 0.35) },
-	Back = { shoulder = Vector3.new(0, 2.35, 0.15), hip = Vector3.new(0, 0.85, 0.45) },
+	Front = { shoulder = Vector3.new(0, 1.9, -0.15), hip = Vector3.new(0, 0.85, 0.35) },
+	Back = { shoulder = Vector3.new(0, 1.9, 0.15), hip = Vector3.new(0, 0.85, 0.45) },
 }
 local ROW_PARTNER = { DriverSeat = "ShotgunSeat", ShotgunSeat = "DriverSeat", BackSeatL = "BackSeatR", BackSeatR = "BackSeatL" }
 local MOVE_KEYS = { Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D }
@@ -67,6 +68,8 @@ local function smooth(t)
 end
 
 local debugKeys = {} -- keys held by the Studio test hook at the bottom of this script
+local timeScale = 1 -- the test hook can slow or freeze the frame for screenshots
+local debugCam -- the test hook can park the camera elsewhere to look at the body
 local function isDown(key)
 	return debugKeys[key] == true or UserInputService:IsKeyDown(key)
 end
@@ -151,6 +154,19 @@ workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 	body.model.Parent = camera
 end)
 local bodyCF = CFrame.new()
+
+-- instrument glow: a dim light only you see, so your hands on the wheel read in the dark. It hangs
+-- above the wheel toward your eyes, on the seat so steering can't move it.
+local glow = Instance.new("Attachment")
+glow.Name = "InstrumentGlow"
+glow.Parent = cab:WaitForChild("DriverSeat")
+glow.WorldPosition = wheel.Position + cab:GetPivot():VectorToWorldSpace(Vector3.new(0, 0.7, 0.72) * cab:GetScale())
+local glowLight = Instance.new("PointLight")
+glowLight.Color = Color3.fromRGB(255, 205, 160)
+glowLight.Brightness = 0.7
+glowLight.Range = 2.6
+glowLight.Shadows = false
+glowLight.Parent = glow
 
 local hands = {}
 for _, side in { "L", "R" } do
@@ -365,7 +381,7 @@ local function onCharacter(c)
 			return -- sequences manage their own seat changes
 		end
 		if sp and mode ~= "seated" then
-			enterSeated(sp, 0, 0) -- spawned straight into a seat
+			enterSeated(sp, 0, SEAT_PITCH) -- spawned straight into a seat
 		elseif not sp and mode == "seated" then
 			enterWalk()
 		end
@@ -381,7 +397,7 @@ local function onCharacter(c)
 		end
 	end)
 	if humanoid.SeatPart then
-		enterSeated(humanoid.SeatPart, 0, 0)
+		enterSeated(humanoid.SeatPart, 0, SEAT_PITCH)
 	end
 end
 
@@ -535,7 +551,7 @@ local function startEnter(door)
 		{ t = T + 0.15, pos = nearEye - Vector3.new(0, 0.07, 0), yaw = 0, pitch = -0.05 },
 		{ t = T + 0.55, pos = nearEye + lean, yaw = -s * math.rad(48), pitch = -0.3 },
 		{ t = T + 1.05, pos = nearEye + lean * 0.6, yaw = -s * math.rad(36), pitch = -0.22 },
-		{ t = T + 1.4, pos = nearEye, yaw = 0, pitch = 0 },
+		{ t = T + 1.4, pos = nearEye, yaw = 0, pitch = SEAT_PITCH },
 	}
 	local sq = newSeq(keys, T + 1.4)
 	sq.cancelUntil = 0.95
@@ -797,7 +813,7 @@ local function startExit()
 			showHint(reason)
 		end
 		if humanoid and humanoid.SeatPart then
-			enterSeated(humanoid.SeatPart, 0, 0)
+			enterSeated(humanoid.SeatPart, 0, SEAT_PITCH)
 		else
 			driveRoot(false)
 			enterWalk()
@@ -830,7 +846,7 @@ local function startSlide(target)
 	local sq = newSeq({
 		{ t = 0, pos = toCab(camera.CFrame.Position), yaw = yaw0, pitch = pitch0 },
 		{ t = 0.4, pos = (from + to) / 2 + Vector3.new(0, 0.2, 0), yaw = -side * math.rad(15), pitch = -0.1 },
-		{ t = 0.8, pos = to, yaw = 0, pitch = 0 },
+		{ t = 0.8, pos = to, yaw = 0, pitch = SEAT_PITCH },
 	}, 0.8)
 	seq = sq
 	mode = "seq"
@@ -859,7 +875,7 @@ local function startSlide(target)
 		end
 		local sp = humanoid.SeatPart
 		if sp then
-			enterSeated(sp, 0, 0)
+			enterSeated(sp, 0, SEAT_PITCH)
 		else
 			enterWalk()
 		end
@@ -1067,7 +1083,7 @@ local function frame(dt)
 	if not (root and humanoid and humanoid.Health > 0 and root.Parent) then
 		return
 	end
-	dt = math.min(dt, 1 / 15)
+	dt = math.min(dt, 1 / 15) * timeScale
 	camera.CameraType = Enum.CameraType.Scriptable
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 	UserInputService.MouseIconEnabled = false
@@ -1236,7 +1252,7 @@ local function frame(dt)
 	if shake > 0.01 then
 		shakeRot = CFrame.Angles(math.noise(idleTime * 31, 1) * 0.02 * shake, math.noise(idleTime * 29, 2) * 0.015 * shake, math.noise(idleTime * 27, 3) * 0.02 * shake)
 	end
-	camera.CFrame = CFrame.new(eye) * rot * shakeRot
+	camera.CFrame = debugCam or CFrame.new(eye) * rot * shakeRot
 	camera.FieldOfView += (fovGoal - camera.FieldOfView) * damp(5, dt)
 
 	-- hide the real avatar from its own player
@@ -1317,6 +1333,10 @@ if RunService:IsStudio() then
 			debugKeys[Enum.KeyCode[a]] = b == true or nil
 		elseif cmd == "teleport" then
 			root.CFrame = a
+		elseif cmd == "timescale" then
+			timeScale = a
+		elseif cmd == "camera" then
+			debugCam = a
 		end
 		local s = {
 			mode = mode,
