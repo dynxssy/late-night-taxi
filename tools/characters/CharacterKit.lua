@@ -54,9 +54,10 @@ local GENERIC = {
 		outfits = { "Out_F_RedCoat", "Out_F_GreyCoat", "Out_F_Denim", "Out_F_Cardigan", "Out_F_Parka" } },
 }
 
-function Kit.random(rng: Random?, changed: boolean?): { [string]: any }
+-- Random generic fare. female: true/false/nil (nil = coin flip). changed: the Changed face.
+function Kit.random(rng: Random?, female: boolean?, changed: boolean?): { [string]: any }
 	local r = rng or Random.new()
-	local rig = r:NextNumber() < 0.5 and "M" or "F"
+	local rig = if female == nil then (r:NextNumber() < 0.5 and "M" or "F") elseif female then "F" else "M"
 	local g = GENERIC[rig]
 	local o: { [string]: any } = {
 		rig = rig,
