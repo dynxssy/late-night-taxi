@@ -1315,6 +1315,96 @@ local function frame(dt)
 end
 
 local lastRender = 0
+-- road flare for kicking a rider out: pop the glovebox, strike it, thrust it at the back seat.
+-- done() is called at the thrust, which is when the rider gets thrown out.
+local flareEvent = Instance.new("BindableEvent")
+flareEvent.Name = "FlareKick"
+flareEvent.Parent = script
+local flaring = false
+flareEvent.Event:Connect(function(done)
+	local chassis = cab:FindFirstChild("Chassis")
+	if flaring then
+		return -- already mid-scene
+	end
+	if mode ~= "seated" or (chassis and chassis.AssemblyLinearVelocity.Magnitude > 3) then
+		done()
+		return
+	end
+	flaring = true
+	local function at(x, y, z)
+		return (cab:GetPivot() * CFrame.new(x, y, z)).Position
+	end
+	-- reach over and pop the glovebox
+	setHand("R", function()
+		return grabCF("R", at(0.9, 2.2, -1.6)), "handle"
+	end, 0.45)
+	task.wait(0.5)
+	local flare = Instance.new("Part")
+	flare.Name = "RoadFlare"
+	flare.Size = Vector3.new(0.09, 0.09, 0.6)
+	flare.Color = Color3.fromRGB(150, 20, 15)
+	flare.Material = Enum.Material.SmoothPlastic
+	flare.Anchored, flare.CanCollide, flare.CanQuery, flare.CanTouch = true, false, false, false
+	local tip = Instance.new("Attachment")
+	tip.Position = Vector3.new(0, 0, -0.3)
+	tip.Parent = flare
+	local glow = Instance.new("PointLight")
+	glow.Color = Color3.fromRGB(255, 40, 25)
+	glow.Brightness = 0
+	glow.Range = 16
+	glow.Shadows = true
+	glow.Parent = tip
+	local sparks = Instance.new("ParticleEmitter")
+	sparks.Color = ColorSequence.new(Color3.fromRGB(255, 90, 60), Color3.fromRGB(255, 20, 10))
+	sparks.LightEmission = 1
+	sparks.Size = NumberSequence.new(0.12, 0)
+	sparks.Lifetime = NumberRange.new(0.2, 0.45)
+	sparks.Speed = NumberRange.new(2, 4)
+	sparks.SpreadAngle = Vector2.new(25, 25)
+	sparks.Rate = 0
+	sparks.Parent = tip
+	flare.Parent = workspace.CurrentCamera
+	local follow = RunService.Heartbeat:Connect(function()
+		local h = hands.R.current
+		if h then
+			flare.CFrame = h * CFrame.new(0, -0.08, -0.3) * CFrame.Angles(0, 0, 0)
+		end
+	end)
+	-- pull it out in front of the chest and strike it
+	setHand("R", function()
+		return bodyCF * CFrame.new(0.35, -0.55, -1.1) * CFrame.Angles(0.4, 0, 0), "grip"
+	end, 0.35)
+	task.wait(0.4)
+	flare.Material = Enum.Material.Neon
+	flare.Color = Color3.fromRGB(255, 60, 40)
+	sparks.Rate = 120
+	for i = 1, 6 do
+		glow.Brightness = i * 0.8 * (0.8 + math.random() * 0.4)
+		task.wait(0.03)
+	end
+	-- thrust it back at the rider
+	setHand("R", function()
+		return grabCF("R", at(-0.3, 3.0, 1.9)), "grip"
+	end, 0.25)
+	task.wait(0.3)
+	done()
+	local t0 = os.clock()
+	while os.clock() - t0 < 0.9 do
+		glow.Brightness = 4 + math.noise(os.clock() * 9) * 1.5
+		task.wait()
+	end
+	-- toss it out of view and take the wheel again
+	sparks.Rate = 0
+	for i = 5, 0, -1 do
+		glow.Brightness = i * 0.8
+		task.wait(0.04)
+	end
+	follow:Disconnect()
+	flare:Destroy()
+	setHand("R", restProvider("R"), 0.4)
+	flaring = false
+end)
+
 RunService:BindToRenderStep("FirstPersonController", Enum.RenderPriority.Camera.Value + 1, function(dt)
 	lastRender = os.clock()
 	frame(dt)
